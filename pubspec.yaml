@@ -1,0 +1,19 @@
+name: oulad_ali_pos
+description: "POS System for Oulad Ali ElSaeedi Supermarket"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  device_info_plus: ^10.1.0
+  shared_preferences: ^2.2.2
+  crypto: ^3.0.3
+
+flutter:
+  uses-material-design: true
