@@ -26,7 +26,7 @@ class OuladAliPOSApp extends StatelessWidget {
 }
 
 // ==========================================
-// 1. DATABASE HELPER
+// DATABASE HELPER
 // ==========================================
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
@@ -59,8 +59,7 @@ class DatabaseHelper {
         name TEXT NOT NULL,
         cost_price REAL DEFAULT 0.0,
         selling_price REAL NOT NULL,
-        stock_quantity INTEGER DEFAULT 0,
-        min_stock_warning INTEGER DEFAULT 5
+        stock_quantity INTEGER DEFAULT 0
       )
     ''');
 
@@ -71,18 +70,6 @@ class DatabaseHelper {
         paid_amount REAL NOT NULL,
         remaining_amount REAL DEFAULT 0.0,
         created_at TEXT NOT NULL
-      )
-    ''');
-
-    await db.execute('''
-      CREATE TABLE sale_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sale_id INTEGER NOT NULL,
-        product_id INTEGER NOT NULL,
-        quantity INTEGER NOT NULL,
-        unit_price REAL NOT NULL,
-        subtotal REAL NOT NULL,
-        FOREIGN KEY (sale_id) REFERENCES sales (id) ON DELETE CASCADE
       )
     ''');
   }
@@ -97,6 +84,11 @@ class DatabaseHelper {
     return await db.query('products', orderBy: 'name ASC');
   }
 
+  Future<List<Map<String, dynamic>>> getAllSales() async {
+    final db = await instance.database;
+    return await db.query('sales', orderBy: 'id DESC');
+  }
+
   Future<int> processSale({
     required List<Map<String, dynamic>> cartItems,
     required double totalAmount,
@@ -107,27 +99,20 @@ class DatabaseHelper {
 
     await db.transaction((txn) async {
       double remaining = paidAmount - totalAmount;
-      
       saleId = await txn.insert('sales', {
         'total_amount': totalAmount,
         'paid_amount': paidAmount,
         'remaining_amount': remaining,
-        'created_at': DateTime.now().toIso8601String(),
+        'created_at': DateTime.now().toString().split('.')[0],
       });
 
       for (var item in cartItems) {
-        await txn.insert('sale_items', {
-          'sale_id': saleId,
-          'product_id': item['product_id'],
-          'quantity': item['quantity'],
-          'unit_price': item['price'],
-          'subtotal': item['price'] * item['quantity'],
-        });
-
-        await txn.rawUpdate(
-          'UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?',
-          [item['quantity'], item['product_id']],
-        );
+        if (item['product_id'] != null && item['product_id'] > 0) {
+          await txn.rawUpdate(
+            'UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?',
+            [item['quantity'], item['product_id']],
+          );
+        }
       }
     });
 
@@ -136,7 +121,7 @@ class DatabaseHelper {
 }
 
 // ==========================================
-// 2. ACTIVATION GATE (نظام التفعيل)
+// ACTIVATION GATE
 // ==========================================
 class ActivationGate extends StatefulWidget {
   const ActivationGate({Key? key}) : super(key: key);
@@ -185,7 +170,7 @@ class _ActivationGateState extends State<ActivationGate> {
     }
 
     if (_isActivated) {
-      return const CashierScreen();
+      return const MainHomeScreen();
     }
 
     return Scaffold(
@@ -203,7 +188,7 @@ class _ActivationGateState extends State<ActivationGate> {
             ),
             const SizedBox(height: 10),
             const Text(
-              'التطبيق غير مفعل. للحصول على كود التفعيل يرجى الاتصال بـ:\n01115197980',
+              'التطبيق غير مفعل. للدعم اتصل بـ: 01115197980',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
@@ -232,7 +217,48 @@ class _ActivationGateState extends State<ActivationGate> {
 }
 
 // ==========================================
-// 3. CASHIER SCREEN (شاشة الكاشير والمبيعات)
+// MAIN HOME SCREEN WITH BOTTOM NAVIGATION
+// ==========================================
+class MainHomeScreen extends StatefulWidget {
+  const MainHomeScreen({Key? key}) : super(key: key);
+
+  @override
+  State<MainHomeScreen> createState() => _MainHomeScreenState();
+}
+
+class _MainHomeScreenState extends State<MainHomeScreen> {
+  int _currentIndex = 0;
+
+  final List<Widget> _pages = [
+    const CashierScreen(),
+    const ProductsScreen(),
+    const SalesHistoryScreen(),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: _pages[_currentIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        selectedItemColor: Colors.teal,
+        onTap: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.point_of_sale), label: 'الكاشير'),
+          BottomNavigationBarItem(icon: Icon(Icons.inventory), label: 'المنتجات والمخزون'),
+          BottomNavigationBarItem(icon: Icon(Icons.receipt_long), label: 'سجل المبيعات'),
+        ],
+      ),
+    );
+  }
+}
+
+// ==========================================
+// 1. CASHIER SCREEN
 // ==========================================
 class CashierScreen extends StatefulWidget {
   const CashierScreen({Key? key}) : super(key: key);
@@ -243,14 +269,27 @@ class CashierScreen extends StatefulWidget {
 
 class _CashierScreenState extends State<CashierScreen> {
   final List<Map<String, dynamic>> _cart = [];
-  final TextEditingController _paidController = TextEditingController();
+  List<Map<String, dynamic>> _dbProducts = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProducts();
+  }
+
+  void _loadProducts() async {
+    final products = await DatabaseHelper.instance.getAllProducts();
+    setState(() {
+      _dbProducts = products;
+    });
+  }
 
   double get _totalAmount => _cart.fold(0.0, (sum, item) => sum + (item['price'] * item['quantity']));
 
   void _addToCart(String name, double price, int productId) {
     setState(() {
-      int index = _cart.indexWhere((element) => element['product_id'] == productId);
-      if (index != -1) {
+      int index = _cart.indexWhere((element) => element['product_id'] == productId && productId != 0);
+      if (index != -1 && productId != 0) {
         _cart[index]['quantity']++;
       } else {
         _cart.add({
@@ -265,22 +304,22 @@ class _CashierScreenState extends State<CashierScreen> {
 
   void _checkout() async {
     if (_cart.isEmpty) return;
-    double paid = double.tryParse(_paidController.text) ?? _totalAmount;
 
     await DatabaseHelper.instance.processSale(
       cartItems: _cart,
       totalAmount: _totalAmount,
-      paidAmount: paid,
+      paidAmount: _totalAmount,
     );
 
     setState(() {
       _cart.clear();
-      _paidController.clear();
     });
+
+    _loadProducts();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تمت عملية البيع بنجاح وحفظ الفاتورة!')),
+        const SnackBar(content: Text('تم إتمام البيع وتسجيل الفاتورة بنجاح!')),
       );
     }
   }
@@ -289,14 +328,14 @@ class _CashierScreenState extends State<CashierScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('كاشير - أولاد علي الصعيدي'),
+        title: const Text('الكاشير - أولاد علي الصعيدي'),
         backgroundColor: Colors.teal,
       ),
       body: Column(
         children: [
           Expanded(
             child: _cart.isEmpty
-                ? const Center(child: Text('السلة فارغة، اضغط على إضافات سريعة للتجربة'))
+                ? const Center(child: Text('السلة فارغة، اختر منتجات من الأسفل'))
                 : ListView.builder(
                     itemCount: _cart.length,
                     itemBuilder: (context, index) {
@@ -310,45 +349,212 @@ class _CashierScreenState extends State<CashierScreen> {
                   ),
           ),
           Container(
-            padding: const EdgeInsets.all(16),
-            color: Colors.grey[200],
+            padding: const EdgeInsets.all(12),
+            color: Colors.grey[100],
             child: Column(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    ElevatedButton(
-                      onPressed: () => _addToCart('منتج تجريبي 1', 10.0, 1),
-                      child: const Text('+ منتج 10ج'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () => _addToCart('منتج تجريبي 2', 25.0, 2),
-                      child: const Text('+ منتج 25ج'),
-                    ),
-                  ],
+                SizedBox(
+                  height: 50,
+                  child: _dbProducts.isEmpty
+                      ? SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              ElevatedButton(
+                                onPressed: () => _addToCart('منتج سريع 10ج', 10.0, 0),
+                                child: const Text('+ 10ج'),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () => _addToCart('منتج سريع 25ج', 25.0, 0),
+                                child: const Text('+ 25ج'),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _dbProducts.length,
+                          itemBuilder: (context, index) {
+                            final p = _dbProducts[index];
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                              child: ElevatedButton(
+                                onPressed: () => _addToCart(p['name'], p['selling_price'], p['id']),
+                                child: Text('${p['name']} (${p['selling_price']}ج)'),
+                              ),
+                            );
+                          },
+                        ),
                 ),
                 const SizedBox(height: 10),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('الإجمالي:', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                    const Text('الإجمالي:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     Text('$_totalAmount ج.م', style: const TextStyle(fontSize: 20, color: Colors.teal, fontWeight: FontWeight.bold)),
                   ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 ElevatedButton(
                   onPressed: _checkout,
                   style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 50),
+                    minimumSize: const Size(double.infinity, 45),
                     backgroundColor: Colors.teal,
                   ),
-                  child: const Text('إتمام البيع وطباعة', style: TextStyle(fontSize: 18, color: Colors.white)),
+                  child: const Text('إتمام البيع', style: TextStyle(fontSize: 18, color: Colors.white)),
                 ),
               ],
             ),
           )
         ],
       ),
+    );
+  }
+}
+
+// ==========================================
+// 2. PRODUCTS MANAGEMENT SCREEN
+// ==========================================
+class ProductsScreen extends StatefulWidget {
+  const ProductsScreen({Key? key}) : super(key: key);
+
+  @override
+  State<ProductsScreen> createState() => _ProductsScreenState();
+}
+
+class _ProductsScreenState extends State<ProductsScreen> {
+  List<Map<String, dynamic>> _products = [];
+  final _nameController = TextEditingController();
+  final _priceController = TextEditingController();
+  final _stockController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshProducts();
+  }
+
+  void _refreshProducts() async {
+    final data = await DatabaseHelper.instance.getAllProducts();
+    setState(() {
+      _products = data;
+    });
+  }
+
+  void _showAddProductDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('إضافة منتج جديد'),
+        content: Column(
+          mainAxisSize: ViewAxisSize.min,
+          children: [
+            TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'اسم المنتج')),
+            TextField(controller: _priceController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'سعر البيع')),
+            TextField(controller: _stockController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الكمية بالمخزن')),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              if (_nameController.text.isNotEmpty && _priceController.text.isNotEmpty) {
+                await DatabaseHelper.instance.insertProduct({
+                  'name': _nameController.text,
+                  'selling_price': double.parse(_priceController.text),
+                  'stock_quantity': int.tryParse(_stockController.text) ?? 0,
+                });
+                _nameController.clear();
+                _priceController.clear();
+                _stockController.clear();
+                Navigator.pop(context);
+                _refreshProducts();
+              }
+            },
+            child: const Text('حفظ'),
+          )
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('إدارة المنتجات والمخزون'),
+        backgroundColor: Colors.teal,
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showAddProductDialog,
+        backgroundColor: Colors.teal,
+        child: const Icon(Icons.add),
+      ),
+      body: _products.isEmpty
+          ? const Center(child: Text('لا توجد منتجات مضافة بعد. اضغط + لإضافة منتج'))
+          : ListView.builder(
+              itemCount: _products.length,
+              itemBuilder: (context, index) {
+                final p = _products[index];
+                return ListTile(
+                  leading: const CircleAvatar(child: Icon(Icons.shopping_bag)),
+                  title: Text(p['name']),
+                  subtitle: Text('السعر: ${p['selling_price']} ج.م'),
+                  trailing: Text('المخزون: ${p['stock_quantity']}'),
+                );
+              },
+            ),
+    );
+  }
+}
+
+// ==========================================
+// 3. SALES HISTORY SCREEN
+// ==========================================
+class SalesHistoryScreen extends StatefulWidget {
+  const SalesHistoryScreen({Key? key}) : super(key: key);
+
+  @override
+  State<SalesHistoryScreen> createState() => _SalesHistoryScreenState();
+}
+
+class _SalesHistoryScreenState extends State<SalesHistoryScreen> {
+  List<Map<String, dynamic>> _sales = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSales();
+  }
+
+  void _loadSales() async {
+    final data = await DatabaseHelper.instance.getAllSales();
+    setState(() {
+      _sales = data;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('سجل المبيعات والفواتير'),
+        backgroundColor: Colors.teal,
+      ),
+      body: _sales.isEmpty
+          ? const Center(child: Text('لا توجد فواتير مبيعات مسجلة'))
+          : ListView.builder(
+              itemCount: _sales.length,
+              itemBuilder: (context, index) {
+                final s = _sales[index];
+                return ListTile(
+                  leading: const Icon(Icons.receipt, color: Colors.teal),
+                  title: Text('فاتورة #${s['id']} - ${s['total_amount']} ج.م'),
+                  subtitle: Text('التاريخ: ${s['created_at']}'),
+                );
+              },
+            ),
     );
   }
 }
