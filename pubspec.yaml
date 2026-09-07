@@ -15,5 +15,9 @@ dependencies:
   shared_preferences: ^2.2.2
   crypto: ^3.0.3
 
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
 flutter:
   uses-material-design: true
